@@ -261,6 +261,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_enter_otp(self, user_input=None):
         """Prompt user to enter the OTP."""
+        from .api_patches import verify_patches_applied
+
         errors = {}
 
         if user_input is None:
@@ -269,6 +271,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         try:
+            # Verify our patches are active before attempting OTP
+            verify_patches_applied()
+            _LOGGER.info("KIA_UVO: Patches verified, attempting OTP verification")
+
             await self.hass.async_add_executor_job(
                 self._vehicle_manager.verify_otp_and_complete_login,
                 user_input["otp"],

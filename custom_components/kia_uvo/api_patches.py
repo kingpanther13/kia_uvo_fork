@@ -181,36 +181,37 @@ def apply_patches():
     global _PATCHES_APPLIED
 
     if _PATCHES_APPLIED:
-        _LOGGER.info("kia_uvo - API patches already applied, skipping")
         return
 
-    _LOGGER.warning("=" * 60)
-    _LOGGER.warning("kia_uvo - APPLYING KIAUVOAPIUSA PATCHES FOR OTP HANDLING")
-    _LOGGER.warning("=" * 60)
+    # Use print() to ensure this shows up no matter what logging config is set
+    print("=" * 60)
+    print("KIA_UVO PATCH: APPLYING KIAUVOAPIUSA PATCHES FOR OTP HANDLING")
+    print("=" * 60)
 
     # Import the class to patch
     from hyundai_kia_connect_api.KiaUvoApiUSA import KiaUvoApiUSA
-
-    # Store original methods for reference
-    original_verify_otp = getattr(KiaUvoApiUSA, '_verify_otp', None)
-    original_complete_login = getattr(KiaUvoApiUSA, '_complete_login_with_otp', None)
-    original_verify_and_complete = getattr(KiaUvoApiUSA, 'verify_otp_and_complete_login', None)
-
-    _LOGGER.warning(f"kia_uvo - Original _verify_otp: {original_verify_otp}")
-    _LOGGER.warning(f"kia_uvo - Original _complete_login_with_otp: {original_complete_login}")
-    _LOGGER.warning(f"kia_uvo - Original verify_otp_and_complete_login: {original_verify_and_complete}")
 
     # Apply patches
     KiaUvoApiUSA._verify_otp = _patched_verify_otp
     KiaUvoApiUSA._complete_login_with_otp = _patched_complete_login_with_otp
     KiaUvoApiUSA.verify_otp_and_complete_login = _patched_verify_otp_and_complete_login
 
-    # Verify patches were applied
-    _LOGGER.warning(f"kia_uvo - New _verify_otp: {KiaUvoApiUSA._verify_otp}")
-    _LOGGER.warning(f"kia_uvo - New verify_otp_and_complete_login: {KiaUvoApiUSA.verify_otp_and_complete_login}")
+    # Mark a flag on the class so we can verify patches are active
+    KiaUvoApiUSA._kia_uvo_patches_applied = True
 
     _PATCHES_APPLIED = True
 
-    _LOGGER.warning("=" * 60)
-    _LOGGER.warning("kia_uvo - PATCHES APPLIED SUCCESSFULLY")
-    _LOGGER.warning("=" * 60)
+    print("KIA_UVO PATCH: Patches applied successfully!")
+    print(f"KIA_UVO PATCH: verify_otp_and_complete_login = {KiaUvoApiUSA.verify_otp_and_complete_login}")
+    print("=" * 60)
+
+
+def verify_patches_applied():
+    """Verify patches are applied, raise error if not."""
+    from hyundai_kia_connect_api.KiaUvoApiUSA import KiaUvoApiUSA
+
+    if not getattr(KiaUvoApiUSA, '_kia_uvo_patches_applied', False):
+        raise RuntimeError(
+            "KIA_UVO PATCH ERROR: Patches were not applied to KiaUvoApiUSA! "
+            "The OTP fix will not work. Please report this issue."
+        )
