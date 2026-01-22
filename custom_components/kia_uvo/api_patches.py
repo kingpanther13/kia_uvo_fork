@@ -7,12 +7,12 @@ rmtoken is no longer returned in the OTP verification response headers.
 
 import logging
 import datetime as dt
-
-from hyundai_kia_connect_api.KiaUvoApiUSA import KiaUvoApiUSA
-from hyundai_kia_connect_api.Token import Token
-from hyundai_kia_connect_api.const import DOMAIN, LOGIN_TOKEN_LIFETIME
+import sys
 
 _LOGGER = logging.getLogger(__name__)
+
+# Track if patches have been applied
+_PATCHES_APPLIED = False
 
 
 def _patched_verify_otp(self, otp_key: str, otp_code: str, xid: str) -> tuple[str, str]:
@@ -23,41 +23,49 @@ def _patched_verify_otp(self, otp_key: str, otp_code: str, xid: str) -> tuple[st
     OTP verification response headers. This patch:
     1. Tries to get rmtoken from headers (original behavior)
     2. If not found, checks the JSON response body
-    3. If still not found, uses an empty string and attempts to proceed
+    3. If still not found, uses sid as fallback
     """
+    from hyundai_kia_connect_api.const import DOMAIN
+
+    _LOGGER.warning(f"{DOMAIN} - PATCHED _verify_otp is running!")
+
     url = self.API_URL + "cmm/verifyOTP"
     headers = self.api_headers()
     headers["otpkey"] = otp_key
     headers["xid"] = xid
     data = {"otp": otp_code}
 
+    _LOGGER.debug(f"{DOMAIN} - Sending OTP verification request to {url}")
     response = self.session.post(url, json=data, headers=headers)
-    _LOGGER.debug(f"{DOMAIN} - Verify OTP Response: {response.text}")
-    _LOGGER.debug(f"{DOMAIN} - Verify OTP Response Headers: {dict(response.headers)}")
+    _LOGGER.warning(f"{DOMAIN} - Verify OTP Response: {response.text}")
+    _LOGGER.warning(f"{DOMAIN} - Verify OTP Response Headers: {dict(response.headers)}")
 
     response_json = response.json()
 
-    if response_json.get("status", {}).get("statusCode", -1) != 0:
+    # Check for errors
+    status_code = response_json.get("status", {}).get("statusCode", -1)
+    if status_code != 0:
         error_msg = response_json.get("status", {}).get("errorMessage", "Unknown error")
+        _LOGGER.error(f"{DOMAIN} - OTP verification failed with status {status_code}: {error_msg}")
         raise Exception(f"{DOMAIN} - OTP verification failed: {error_msg}")
 
-    # Try to get sid from headers first, then from response body
+    # Try to get sid from multiple locations
     sid = response.headers.get("sid")
     if not sid:
         sid = response_json.get("sid")
     if not sid:
-        # Check if it's in the payload
         payload = response_json.get("payload", {})
-        sid = payload.get("sid")
+        if payload:
+            sid = payload.get("sid")
 
-    # Try to get rmtoken from headers first, then from response body
+    # Try to get rmtoken from multiple locations
     rmtoken = response.headers.get("rmtoken")
     if not rmtoken:
         rmtoken = response_json.get("rmtoken")
     if not rmtoken:
-        # Check if it's in the payload
         payload = response_json.get("payload", {})
-        rmtoken = payload.get("rmtoken")
+        if payload:
+            rmtoken = payload.get("rmtoken")
 
     if not sid:
         raise Exception(
@@ -68,12 +76,11 @@ def _patched_verify_otp(self, otp_key: str, otp_code: str, xid: str) -> tuple[st
     if not rmtoken:
         _LOGGER.warning(
             f"{DOMAIN} - No rmtoken in OTP verification response. "
-            "Attempting to proceed without it. This may fail if the API requires it."
+            "Using sid as fallback for rmtoken."
         )
-        # Use sid as rmtoken fallback - some API versions accept this
         rmtoken = sid
 
-    _LOGGER.debug(f"{DOMAIN} - OTP Verify extracted sid: {sid}, rmtoken: {rmtoken}")
+    _LOGGER.warning(f"{DOMAIN} - OTP Verify extracted sid: {sid[:8]}..., rmtoken: {rmtoken[:8] if rmtoken else 'None'}...")
     return sid, rmtoken
 
 
@@ -82,9 +89,11 @@ def _patched_complete_login_with_otp(
 ) -> str:
     """
     Patched version of _complete_login_with_otp with better error handling.
-
-    Handles cases where rmtoken might be empty or invalid.
     """
+    from hyundai_kia_connect_api.const import DOMAIN
+
+    _LOGGER.warning(f"{DOMAIN} - PATCHED _complete_login_with_otp is running!")
+
     url = self.API_URL + "prof/authUser"
     data = {
         "deviceKey": self.device_id,
@@ -94,32 +103,30 @@ def _patched_complete_login_with_otp(
     headers = self.api_headers()
     headers["sid"] = sid
 
-    # Only add rmtoken header if we have one
     if rmtoken:
         headers["rmtoken"] = rmtoken
 
-    _LOGGER.debug(f"{DOMAIN} - Complete login headers: sid={sid}, rmtoken={rmtoken}")
+    _LOGGER.debug(f"{DOMAIN} - Completing login with sid={sid[:8]}...")
 
     response = self.session.post(url, json=data, headers=headers)
-    _LOGGER.debug(f"{DOMAIN} - Complete Login Response: {response.text}")
-    _LOGGER.debug(f"{DOMAIN} - Complete Login Response Headers: {dict(response.headers)}")
+    _LOGGER.warning(f"{DOMAIN} - Complete Login Response: {response.text}")
+    _LOGGER.warning(f"{DOMAIN} - Complete Login Response Headers: {dict(response.headers)}")
 
     response_json = response.json()
 
-    # Check for errors in response
     status = response_json.get("status", {})
     if status.get("statusCode", 0) != 0:
         error_msg = status.get("errorMessage", "Unknown error")
         _LOGGER.error(f"{DOMAIN} - Complete login failed: {error_msg}")
         raise Exception(f"{DOMAIN} - Complete login failed: {error_msg}")
 
-    # Try to get final_sid from headers first, then response body
     final_sid = response.headers.get("sid")
     if not final_sid:
         final_sid = response_json.get("sid")
     if not final_sid:
         payload = response_json.get("payload", {})
-        final_sid = payload.get("sid")
+        if payload:
+            final_sid = payload.get("sid")
 
     if not final_sid:
         raise Exception(
@@ -127,6 +134,7 @@ def _patched_complete_login_with_otp(
             f"Response: {response.text}, Headers: {dict(response.headers)}"
         )
 
+    _LOGGER.warning(f"{DOMAIN} - Complete login successful, got final sid: {final_sid[:8]}...")
     return final_sid
 
 
@@ -137,11 +145,14 @@ def _patched_verify_otp_and_complete_login(
     otp_code: str,
     otp_request,
     pin: str | None,
-) -> Token:
+):
     """
     Patched version of verify_otp_and_complete_login with improved error handling.
     """
-    _LOGGER.debug(f"{DOMAIN} - Starting OTP verification and login completion")
+    from hyundai_kia_connect_api.Token import Token
+    from hyundai_kia_connect_api.const import DOMAIN, LOGIN_TOKEN_LIFETIME
+
+    _LOGGER.warning(f"{DOMAIN} - PATCHED verify_otp_and_complete_login is running!")
 
     sid, rmtoken = self._verify_otp(
         otp_request.otp_key, otp_code, otp_request.request_id
@@ -150,7 +161,7 @@ def _patched_verify_otp_and_complete_login(
     _LOGGER.debug(f"{DOMAIN} - OTP verified, completing login...")
     final_sid = self._complete_login_with_otp(username, password, sid, rmtoken)
 
-    _LOGGER.debug(f"{DOMAIN} - OTP login successful, obtained final session id")
+    _LOGGER.warning(f"{DOMAIN} - OTP login completed successfully!")
 
     valid_until = dt.datetime.now(dt.timezone.utc) + LOGIN_TOKEN_LIFETIME
 
@@ -167,11 +178,39 @@ def _patched_verify_otp_and_complete_login(
 
 def apply_patches():
     """Apply all patches to the KiaUvoApiUSA class."""
-    _LOGGER.info(f"{DOMAIN} - Applying KiaUvoApiUSA patches for OTP handling")
+    global _PATCHES_APPLIED
 
-    # Patch the methods
+    if _PATCHES_APPLIED:
+        _LOGGER.info("kia_uvo - API patches already applied, skipping")
+        return
+
+    _LOGGER.warning("=" * 60)
+    _LOGGER.warning("kia_uvo - APPLYING KIAUVOAPIUSA PATCHES FOR OTP HANDLING")
+    _LOGGER.warning("=" * 60)
+
+    # Import the class to patch
+    from hyundai_kia_connect_api.KiaUvoApiUSA import KiaUvoApiUSA
+
+    # Store original methods for reference
+    original_verify_otp = getattr(KiaUvoApiUSA, '_verify_otp', None)
+    original_complete_login = getattr(KiaUvoApiUSA, '_complete_login_with_otp', None)
+    original_verify_and_complete = getattr(KiaUvoApiUSA, 'verify_otp_and_complete_login', None)
+
+    _LOGGER.warning(f"kia_uvo - Original _verify_otp: {original_verify_otp}")
+    _LOGGER.warning(f"kia_uvo - Original _complete_login_with_otp: {original_complete_login}")
+    _LOGGER.warning(f"kia_uvo - Original verify_otp_and_complete_login: {original_verify_and_complete}")
+
+    # Apply patches
     KiaUvoApiUSA._verify_otp = _patched_verify_otp
     KiaUvoApiUSA._complete_login_with_otp = _patched_complete_login_with_otp
     KiaUvoApiUSA.verify_otp_and_complete_login = _patched_verify_otp_and_complete_login
 
-    _LOGGER.info(f"{DOMAIN} - KiaUvoApiUSA patches applied successfully")
+    # Verify patches were applied
+    _LOGGER.warning(f"kia_uvo - New _verify_otp: {KiaUvoApiUSA._verify_otp}")
+    _LOGGER.warning(f"kia_uvo - New verify_otp_and_complete_login: {KiaUvoApiUSA.verify_otp_and_complete_login}")
+
+    _PATCHES_APPLIED = True
+
+    _LOGGER.warning("=" * 60)
+    _LOGGER.warning("kia_uvo - PATCHES APPLIED SUCCESSFULLY")
+    _LOGGER.warning("=" * 60)

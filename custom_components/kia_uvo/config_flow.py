@@ -6,15 +6,15 @@ import hashlib
 import logging
 from typing import Any
 
+# Apply patches BEFORE importing hyundai_kia_connect_api
+# This fixes OTP verification issues with Kia USA API (missing rmtoken)
+from .api_patches import apply_patches
+apply_patches()
+
 from hyundai_kia_connect_api import Token, VehicleManager
 from hyundai_kia_connect_api.ApiImpl import OTPRequest
 from hyundai_kia_connect_api.exceptions import AuthenticationError
 from hyundai_kia_connect_api.const import OTP_NOTIFY_TYPE
-
-# Apply patches to fix OTP verification issues with Kia USA API
-# Must be applied early, before any API calls during config flow
-from .api_patches import apply_patches
-apply_patches()
 
 import voluptuous as vol
 

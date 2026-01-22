@@ -1,5 +1,12 @@
 import logging
 
+_LOGGER = logging.getLogger(__name__)
+
+# CRITICAL: Apply patches BEFORE any other imports that use hyundai_kia_connect_api
+# This fixes OTP verification issues with Kia USA API (missing rmtoken)
+from .api_patches import apply_patches
+apply_patches()
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     Platform,
@@ -29,14 +36,6 @@ from .const import (
 )
 from .coordinator import HyundaiKiaConnectDataUpdateCoordinator
 from .services import async_setup_services, async_unload_services
-
-# Apply patches to fix OTP verification issues with Kia USA API
-from .api_patches import apply_patches
-
-_LOGGER = logging.getLogger(__name__)
-
-# Apply API patches early to fix rmtoken issue in OTP verification
-apply_patches()
 
 PLATFORMS: list[str] = [
     Platform.BINARY_SENSOR,
