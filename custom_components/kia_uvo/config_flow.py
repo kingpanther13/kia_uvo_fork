@@ -11,6 +11,11 @@ from hyundai_kia_connect_api.ApiImpl import OTPRequest
 from hyundai_kia_connect_api.exceptions import AuthenticationError
 from hyundai_kia_connect_api.const import OTP_NOTIFY_TYPE
 
+# Apply patches to fix OTP verification issues with Kia USA API
+# Must be applied early, before any API calls during config flow
+from .api_patches import apply_patches
+apply_patches()
+
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -270,6 +275,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         except AuthenticationError:
             errors["base"] = "invalid_otp"
+            return self.async_show_form(
+                step_id="enter_otp",
+                data_schema=vol.Schema({vol.Required("otp"): str}),
+                errors=errors,
+            )
+        except Exception as ex:
+            _LOGGER.exception("OTP verification failed: %s", str(ex))
+            errors["base"] = "unknown"
             return self.async_show_form(
                 step_id="enter_otp",
                 data_schema=vol.Schema({vol.Required("otp"): str}),
